@@ -1,0 +1,25 @@
+{
+  "folders": [
+    {
+      "path": "."
+    },
+    {
+      "path": "backend"
+    }
+  ],
+  "settings": {
+    "files.associations": {
+      "istream": "c",
+      "ws_power_wheel.h": "c",
+      "storage.h": "c",
+      "power_wheel_repository.h": "c",
+      "power_wheel_controller.h": "c",
+      "__locale": "c",
+      "adc_cali_scheme.h": "c",
+      "ws_setup.h": "c",
+      "ws_settings.h": "c",
+      "task.h": "c",
+      "constants.h": "c"
+    }
+  }
+}

@@ -1,0 +1,242 @@
+<!-- Copyright (c) 2025 David Bertet. Licensed under the MIT License. -->
+
+<script>
+  import TelemetryTab from 'src/components/tab/TelemetryTab.svelte'
+  import SystemTab from 'src/components/tab/SystemTab.svelte'
+  import WifiTab from 'src/components/tab/WifiTab.svelte'
+  import ProfilesTab from 'src/components/tab/ProfilesTab.svelte'
+  import WiringTab from 'src/components/tab/WiringTab.svelte'
+  import WebsocketStatus from 'src/components/common/WebsocketStatus.svelte'
+  import SystemStatus from 'src/components/nav/SystemStatus.svelte'
+  import UploadButton from 'src/components/ota/UploadButton.svelte'
+  import SidebarNav from 'src/components/nav/SidebarNav.svelte'
+  import DarkModeToggle from 'src/components/common/DarkModeToggle.svelte'
+  import DisconnectedOverlay from 'src/components/nav/DisconnectedOverlay.svelte'
+  import DemoPill from 'src/components/common/DemoPill.svelte'
+
+  import { onMount, onDestroy } from 'svelte'
+  import {
+    wsState,
+    connectWebSocket,
+    closeWebSocket,
+    sendMessage,
+    onMessageType,
+  } from 'src/lib/ws.svelte.js'
+  import { settingsState, initializeSettings } from 'src/lib/settings.svelte.js'
+
+  import * as Sidebar from '$lib/components/ui/sidebar'
+  import * as AlertDialog from '$lib/components/ui/alert-dialog'
+  import { cn } from '$lib/utils'
+  import { Wifi, Info, CircleGauge, Car, Heart, Settings, Microchip } from 'lucide-svelte'
+
+  const isDev = import.meta.env.DEV
+
+  let activeTab = $state(new URLSearchParams(window.location.search).get('tab') || 'telemetry')
+  let errorMessage = $state(null)
+  let errorUnsub = $state(null)
+  let settingsUnsub = $state(null)
+
+  let delayDisconnectedState = $state(true)
+  const shouldShowDisconnected = $derived(!wsState.isConnected && !delayDisconnectedState)
+
+  let systemBannerVisible = $state(false)
+
+  onMount(() => {
+    let wsUrl
+    if (isDev) {
+      wsUrl = `ws://localhost:8080`
+    } else {
+      const wsHost = window.location.hostname
+      const wsPort = window.location.port || '80'
+      wsUrl = `ws://${wsHost}:${wsPort}/ws`
+    }
+    connectWebSocket(wsUrl)
+
+    // Slight delay to avoid showing blurry animation on opening
+    setTimeout(() => {
+      delayDisconnectedState = false
+    }, 500)
+
+    sendMessage({ type: 'time_update', time: (Date.now() / 1000) | 0 })
+
+    // Initialize settings
+    settingsUnsub = initializeSettings()
+
+    errorUnsub = onMessageType('error', (data) => {
+      errorMessage = data.message || 'Unknow error'
+    })
+
+    return () => {
+      if (errorUnsub) errorUnsub()
+      if (settingsUnsub) settingsUnsub()
+    }
+  })
+
+  onDestroy(() => {
+    closeWebSocket()
+    if (errorUnsub) errorUnsub()
+    if (settingsUnsub) settingsUnsub()
+  })
+
+  // Retrieve current tab from URL
+  $effect(() => {
+    const url = new URL(window.location)
+    url.searchParams.set('tab', activeTab)
+    window.history.replaceState({}, '', url)
+  })
+
+  const tabs = [
+    {
+      id: 'telemetry',
+      label: 'Telemetry',
+      icon: CircleGauge,
+      component: TelemetryTab,
+    },
+    {
+      id: 'profiles',
+      label: 'Profiles',
+      icon: Settings,
+      component: ProfilesTab,
+    },
+    {
+      id: 'wiring',
+      label: 'Wiring',
+      icon: Microchip,
+      component: WiringTab,
+    },
+    {
+      id: 'wifi',
+      label: 'WiFi Settings',
+      icon: Wifi,
+      component: WifiTab,
+    },
+    {
+      id: 'system',
+      label: 'System Info',
+      icon: Info,
+      component: SystemTab,
+    },
+  ]
+
+  function setActiveTab(tab) {
+    activeTab = tab
+  }
+
+  const activeTabData = $derived(tabs.find((tab) => tab.id === activeTab))
+</script>
+
+{#if shouldShowDisconnected}
+  <DisconnectedOverlay />
+{/if}
+
+<div
+  class={cn(
+    'transition-all duration-300',
+    shouldShowDisconnected && 'blur-sm pointer-events-none select-none',
+  )}
+>
+  <Sidebar.Provider>
+    <Sidebar.Root class="border-r border-border/40">
+      <Sidebar.Content class="bg-gradient-to-b from-card to-white dark:from-card dark:to-card/20">
+        <!-- Sidebar Header -->
+        <div class="flex items-center">
+          <div class="flex items-center gap-3 px-6 py-4 border-b border-border/40">
+            <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-primary text-white">
+              <Car class="size-5" />
+            </div>
+            <div class="flex flex-col">
+              <span class="font-semibold text-sm text-foreground">PowerJeep</span>
+              <span class="text-xs text-muted-foreground">Control Panel</span>
+            </div>
+          </div>
+
+          <div class="flex flex-1 justify-end pe-3">
+            <UploadButton class="inline sm:hidden" />
+          </div>
+        </div>
+
+        <SidebarNav {tabs} {activeTab} onTabSelect={setActiveTab} />
+      </Sidebar.Content>
+    </Sidebar.Root>
+
+    <main class="flex-1 flex flex-col min-h-screen">
+      <SystemStatus />
+
+      <div class="bg-background">
+        <!-- Header -->
+        <header
+          class="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60"
+        >
+          <div class="flex h-14 items-center px-6">
+            <div class="md:hidden flex items-center gap-4 mr-4">
+              <Sidebar.Trigger />
+              <div class="flex items-center gap-2">
+                <div class="size-6 rounded bg-primary flex items-center justify-center">
+                  <Car class="size-4 text-white" />
+                </div>
+                <h1 class="text-lg font-semibold">PowerJeep</h1>
+              </div>
+            </div>
+
+            <div class="flex flex-1 justify-end items-center gap-3">
+              <DarkModeToggle />
+              <UploadButton class="hidden sm:inline" />
+              <WebsocketStatus />
+            </div>
+          </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="flex-1 p-6">
+          <div class="max-w-7xl mx-auto">
+            {#if activeTabData}
+              <activeTabData.component />
+            {/if}
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <footer>
+          <div class="max-w-7xl mx-auto px-6 pb-4">
+            <div class="flex items-center justify-center text-sm text-muted-foreground">
+              <span class="flex items-center gap-1">Built with <Heart class="size-3" /> by</span>
+              <a
+                href="https://david.bertet.fr"
+                target="_blank"
+                rel="noopener"
+                class="ml-1 inline-flex items-center gap-1 text-primary hover:text-primary/70 transition-colors duration-200 hover:underline"
+              >
+                David Bertet
+              </a>
+            </div>
+          </div>
+        </footer>
+      </div>
+    </main>
+  </Sidebar.Provider>
+
+  <AlertDialog.Root bind:open={errorMessage}>
+    <AlertDialog.Content>
+      <AlertDialog.Header>
+        <AlertDialog.Title>An error occured</AlertDialog.Title>
+        <AlertDialog.Description>
+          {errorMessage}
+        </AlertDialog.Description>
+      </AlertDialog.Header>
+      <AlertDialog.Footer>
+        <AlertDialog.Action
+          onclick={() => {
+            errorMessage = null
+          }}
+        >
+          OK
+        </AlertDialog.Action>
+      </AlertDialog.Footer>
+    </AlertDialog.Content>
+  </AlertDialog.Root>
+</div>
+
+{#if import.meta.env.MODE === 'github'}
+  <div class="h-20"></div>
+  <DemoPill />
+{/if}

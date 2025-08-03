@@ -1,115 +1,174 @@
-# PowerJeep. A Ryobi Battery Conversion for Ride on Cars
-
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
-> Upgrade your electric ride on car with a 18v Ryobi battery and ESP32-powered electronics.
+# PowerJeep: ESP32 Ride-On Car Controller
 
 <div align="center">
-   <img src="./docs/header.jpg" alt="screenshot of the web interface" width="600px"/>
+  <img src="https://img.shields.io/badge/version-2.0.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/status-active-brightgreen" alt="Status">
+</div><br/>
+
+> Upgrade your electric ride-on car with an 18/20v power tool battery and ESP32-powered electronics for enhanced performance and control.
+
+<div align="center">
+   <img src="./assets/header.jpg" alt="screenshot of the web interface" width="600px"/>
 </div>
 
-## Table of Contents
+## 🌟 Features
 
-- [Introduction](#introduction)
-- [Features](#features)
-- [Requirements](#requirements)
-- [Assembly](#assembly)
-- [Usage](#usage)
-- [Contributing](#contributing)
-- [License](#license)
+- **Power Tool Battery Conversion:** Upgrade your ride-on car's power source to an 18/20v power tool battery (Ryobi, DeWalt, Milwaukee, etc.) for extended runtime and enhanced performance
+- **ESP32 Control:** Utilize the ESP32 microcontroller for precise control, monitoring, and remote safety features
+- **Real-time Data Display:** Monitor speed, configure profiles, and control the car through a sleek web-based dashboard
+- **Multiple Control Modes:** Support for both traditional dual-input or modern speed/direction control schemes, and digital/analog throttle
+- **Battery Protection:** Built-in safeguards to prevent overuse and deep discharging
+- **Mobile-Friendly Interface:** Fully responsive design for use on any device
+- **OTA Updates:** Over-the-air firmware updates for future maintenance
+- **CLI Tool:** Simple software installation and update process
 
-## Introduction
+⚠️ **Safety Warning:** This project can send up to 18-20V to your motor, when they are usually rated for 12V! The system ramps up power gradually to avoid gearbox damage, but be aware it can potentially damage your motor. Ensure proper airflow to keep components cool.
+Drag mode enables quicker acceleration that may cause additional stress on the gearbox, drivetrain components, and motor.
 
-Welcome to the Ryobi Battery Conversion project for ride on cars!
+Try the [web sample](https://davidbertet.github.io/PowerJeep/) to see what it is capable of!
 
-This project aims to replace the old lead battery in your electric ride on car with a modern 18v Ryobi battery, providing improved performance!
+[![Web Sample](./assets/web_preview.jpg)](https://davidbertet.github.io/PowerJeep/)
 
-By utilizing an ESP32 microcontroller, we enable enhanced control and monitoring capabilities for a safe and more enjoyable driving experience for every rider.
+## ⚙️ Requirements
 
-## Features
+### Basic Requirements
 
-- **Ryobi Battery Integration:** Upgrade your kid car's power source to a Ryobi battery for extended runtime and enhanced performance.
-- **ESP32 Control:** Utilize the ESP32 microcontroller for precise control, monitoring, and remote safety features.
-- **Real-time Data Display:** Monitor the speed, configure and update the car through a sleek web-based dashboard.
-- **Battery Protection:** Use safeguards to prevent over use and deep discharging.
-- **Easy Customization:** Adapt the project to fit your specific kid car model and requirements.
-
-
-⚠️ This project can send up to 18V to your motor, when they are usually taking 12V! It ramps up power to avoids gearbox damage, but be aware it can potentially fry your motor. Make sure it has the proper airflow to keep it cool
-
-## Requirements
-
-To replicate this project, you'll need the following things:
-
-- Ride on car with a functionnal motor
-- 18v Ryobi battery and charger
+- Ride-on car with a functional motor
+- 18/20v power tool battery and charger (Ryobi, DeWalt, Milwaukee, etc.)
 - 3D printer
 - Basic hand tools (screwdriver, wire cutter/stripper, soldering iron)
+- ESP32 development board
+- PlatformIO (for backend build)
+- Node.js & npm (for frontend build)
 
-### Electronic components
+### Electronic Components
 
 - 1x ESP32 [On Amazon](https://www.amazon.com/ESP-WROOM-32-Development-Microcontroller-Integrated-Compatible/dp/B08D5ZD528)
 - 1x or 2x LM2596 - Voltage Regulator [On Amazon](https://www.amazon.com/gp/product/B08BLBYWN1)
 - 1x XH-M609 - DC 12V-36V Voltage Protection Module [On Amazon](https://www.amazon.com/gp/product/B08X3HZ69D)
-- 1x BTS7960 43A High Power Motor Driver Module [On Amazon](https://www.amazon.com/gp/product/B07TFB22H5)
+- 1x or 2x BTS7960 43A High Power Motor Driver Module [On Amazon](https://www.amazon.com/gp/product/B07TFB22H5)
 - 1x 30A Circuit Breaker [On Amazon](https://www.amazon.com/gp/product/B096ZTV3CR)
-- Wires and connectors
+- 12AWG wire high power circuit, electronic wire and connectors
 
-Optional
+**Optional:**
+
 - 1x Throttle Pedal (permits precise throttle control, not just on/off) [On Amazon](https://www.amazon.com/KIMISS-Motorcycle-Accelerator-Throttle-Universal/dp/B07HMXLZ1H)
 
-## Assembly
+## 🔧 Assembly
 
 ### Hardware
 
-- Print the battery mount (I used this [one](https://www.thingiverse.com/thing:4587319))
+- Print a mount for your battery (I used this [one](https://www.thingiverse.com/thing:4587319))
 - Print the component support [Source available on OnShare](https://cad.onshape.com/documents/73e5cd159b60a9bf46e87dae/w/8d4b4ae9f68daee1281f112d/e/6d32cd17a65725a466bf965e?renderMode=0&uiState=64801221829a90766f018f83)
+- Setup the XH-M609 to protect your battery when low (cutoff ~15.7V, reactivation ~17.5V)
+- Setup the LM2596 by feeding 18V and turning the small screw until measuring 3.3V output (and another with 5V for your lights)
 - Replace the throttle pedal (optional)
 
 Here is the diagram with the different components. 3.3v doesn't need to be sent to the pedal for simple switch pedals.
+
 <div align="center">
-   <img src="./docs/diagram.jpg" alt="screenshot of the web interface" width="700px"/>
+   <img src="./assets/diagram.jpg" alt="Wiring diagram" width="700px"/>
 </div>
 
-### Software
+### 🚀 Software
 
-### Pre requisites
+1. **Clone the repository**
 
-- Install VSCode with the PlatformIO extension
-- Install drivers for your ESP32
+   ```shell
+   git clone https://github.com/davidbertet/PowerJeep.git
+   cd PowerJeep
+   ```
 
-#### First installation
+2. **Install on your ESP32**
 
-1. Begin by cloning this repository to your local machine
-2. Open the project in VSCode
-2.1 If you replaced the pedal with a hall sensor one, enable WITH_ADC_THROTTLE in `power_wheel.c`. Mine is outputing 1v to 2.6v with 3.3v input, make sure yours is similar or update `get_throttle_position` accordingly.
-3. Connect your ESP32 to your computer
-4. Open PlatformIO extension on the left bar
-5. Click on "esp32dotit -> General -> Upload" to build & upload the project
-6. Click on "esp32dotit -> Platform -> Upload Filesystem" to build & upload the filesystem (webpage)
+   Connect your ESP32 to your computer and install the drivers
 
-### Update
+   Then run the installation script
 
-1. Open the project in VSCode
-2. Open PlatformIO extension on the left bar & build
-3. Turn on the ride on car & connect to the access point wifi emitted by the car
-4. Open the project folder
-5. Drag and drop firmware.bin from `.pio/build/esp32doit-devkit-v1` folder onto the upload icon of the webpage
+   ```shell
+   ./install.sh
+   ```
 
-You can also drag & drop any static files, like `index.html`. In that case it doesn't need to be built
+   And follow the instructions
 
-## Usage
-- Turn on the fuse and drive!
-- Don't forget to turn the fuse off when you are done.
-- To go further
-  - Connect your computer or mobile device to the Wi-Fi network emitted by the car. By default it emits an access point "PowerJeep" with password "Rubicon!"
-  - It should open the page automatically as a captive portal. If it doesn't, open a web browser and enter the IP address http://192.168.4.1 to access the dashboard.
-  - Use the interface to configure the car and view real-time speed. Emergency stop turns off the motor immediately.
+3. **Setup the car**
 
-## Contributing
-Contributions are welcome! 
+- Connect to "PowerJeep" Wifi network (password "Rubicon!")
+- Access 192.168.4.1 on your browser
+- Go to "Wiring" tab to finish setting up your car
+
+4. **Update over the air**
+
+   ```shell
+   git pull
+   ./install.sh --ota <IP> --upload-password <PASSWORD>
+   ```
+
+## 🎮 Usage
+
+- Turn on the circuit breaker and drive!
+- Don't forget to turn the circuit breaker off when you are done
+- **For advanced configuration:**
+  - Connect your computer or mobile device to the Wi-Fi network emitted by the car
+  - The captive portal should open automatically. If it doesn't, navigate to http://192.168.4.1
+  - Use the interface to configure driving profiles, control modes, and view real-time speed
+  - Emergency stop feature turns off the motor immediately for safety
+
+# 🛠️ Tech Stack
+
+- Lightweight Svelte frontend for fast performance
+- ESP-IDF backend with static file serving
+- Websocket interface for real-time updates
+
+## 📝 Installation CLI
+
+```shell
+Usage: ./install.sh [OPTIONS]
+
+Options:
+  -o, --ota <IP>              Set OTA IP address for over-the-air updates
+  -p, --upload-password <PWD> Set upload password for authentication
+  -y, --yes                   Auto-confirm all prompts (non-interactive mode)
+  -f, --frontend-only         Build/deploy frontend only
+  -b, --backend-only          Build/deploy backend only
+  -h, --help                  Show this help message
+```
+
+## 📁 Folder Architecture
+
+```
+PowerJeep/
+├── frontend/    # Svelte web application
+├── backend/     # ESP-IDF backend code
+├── cli/         # CLI tool for install/update
+└── assets/      # Additional media files
+```
+
+# Other
+
+## 🤝 Contributing
+
+Contributions are welcome!
 
 If you have any ideas, improvements, or bug fixes, please submit a pull request. For major changes, please open an issue first to discuss potential updates.
 
-## License
-This project is licensed under the MIT License.
+## 📚 Documentation & Support
+
+- [Issues](https://github.com/davidbertet/PowerJeep/issues)
+- [Websocket Endpoint Guide](https://davidbertet.github.io/PowerJeep/WEBSOCKET_ENDPOINT.md)
+- [LLM Integration Guide](https://davidbertet.github.io/PowerJeep/LLM_GUIDE.md)
+
+## ⚖️ Liability & Insurance Considerations
+
+**Important Legal Notice**: This modification significantly alters your ride-on car from its original manufacturer specifications. Please be aware:
+
+- **Warranty Void**: Any modifications will likely void your manufacturer's warranty
+- **Liability Risk**: As the modifier, you assume responsibility for any accidents, injuries, or property damage resulting from these modifications
+- **Age Restrictions**: This project is intended for adult builders only. Modified vehicles should only be operated by children under direct adult supervision
+
+**Disclaimer**: The creators of this project assume no responsibility for any damage, injury, or legal issues arising from the use of these plans. Build and use at your own risk.
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
