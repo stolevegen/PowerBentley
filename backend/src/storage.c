@@ -7,6 +7,7 @@
 #include "esp_log.h"
 
 static const char *NVS_NAMESPACE = "storage";
+static const char *TAG = "storage";
 
 // Long term storage that survives restart
 
@@ -64,7 +65,7 @@ esp_err_t read_blob(const char *key, void *out_value, size_t *required_size)
   esp_err_t ret = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
   if (ret != ESP_OK)
   {
-    printf("Error (%s) opening NVS handle!\n", esp_err_to_name(ret));
+    ESP_LOGE(TAG, "Error (%s) opening NVS handle!\n", esp_err_to_name(ret));
     return ret;
   }
   ret = nvs_get_blob(nvs_handle, key, out_value, required_size);
@@ -78,7 +79,7 @@ esp_err_t write_blob(const char *key, const void *value, size_t required_size)
   esp_err_t ret = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
   if (ret != ESP_OK)
   {
-    printf("Error (%s) opening NVS handle!\n", esp_err_to_name(ret));
+    ESP_LOGE(TAG, "Error (%s) opening NVS handle!\n", esp_err_to_name(ret));
     return ret;
   }
   ret = nvs_set_blob(nvs_handle, key, value, required_size);
@@ -97,7 +98,7 @@ esp_err_t delete_blob(const char *key)
   esp_err_t ret = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
   if (ret != ESP_OK)
   {
-    printf("Error (%s) opening NVS handle!\n", esp_err_to_name(ret));
+    ESP_LOGE(TAG, "Error (%s) opening NVS handle!\n", esp_err_to_name(ret));
     return ret;
   }
   ret = nvs_erase_key(nvs_handle, key);

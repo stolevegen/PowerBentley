@@ -15,6 +15,8 @@ void ws_handle_get_wiring(const cJSON *root, int sockfd);
 void ws_handle_set_wiring(const cJSON *root, int sockfd);
 
 void ws_handle_set_current_profile(const cJSON *root, int sockfd);
+void send_profiles_response(int sockfd, const stored_profile_list_t *profiles);
+void broadcast_profiles_response(const stored_profile_list_t *profiles);
 void ws_handle_get_profiles(const cJSON *root, int sockfd);
 void ws_handle_save_profile(const cJSON *root, int sockfd);
 void ws_handle_delete_profile(const cJSON *root, int sockfd);

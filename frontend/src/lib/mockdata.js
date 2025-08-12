@@ -174,22 +174,30 @@ export function generateMockResponse(data) {
       ]
 
     case 'save_profile':
+      profiles[data.profile.id] = data.profile
       return [
         {
-          type: 'profile_saved',
-          status: 'success',
-          profile_id: data.profile?.id || 'unknown',
+          type: 'profiles_data',
+          profiles: Object.values(profiles),
         },
       ]
 
     case 'delete_profile':
+      if (current_profile_id === data.profile_id) {
+        return [
+          {
+            type: 'error',
+            message: 'Cannot delete the current profile. Please select another profile first.',
+          },
+        ]
+      }
+
+      delete profiles[data.profile_id]
+
       return [
         {
-          type: 'configuration_deleted',
-          status: data.profile_id === 'default' ? 'error' : 'success',
-          profile_id: data.profile_id,
-          message:
-            data.profile_id === 'default' ? 'Cannot delete default configuration' : undefined,
+          type: 'profiles_data',
+          profiles: Object.values(profiles),
         },
       ]
   }

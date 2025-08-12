@@ -116,11 +116,9 @@ static void get_profile_key(const char *profile_id, char *key_buffer, size_t buf
 // Load profile list from storage
 static esp_err_t load_profile_list(profile_list_t *profile_list)
 {
-    ESP_LOGE(TAG, "load_profile_list");
     size_t required_size = sizeof(profile_list_t);
     esp_err_t ret = read_blob(PROFILE_LIST_KEY, profile_list, &required_size);
 
-    ESP_LOGE(TAG, "Read profile list size: %zu", required_size);
     if (ret != ESP_OK)
     {
         ESP_LOGE(TAG, "Profile list is empty");
@@ -141,7 +139,6 @@ static esp_err_t save_profile_list(const profile_list_t *profile_list)
 // Add profile ID to the list
 static esp_err_t add_profile_to_list(const char *profile_id)
 {
-    ESP_LOGE(TAG, "add_profile_to_list");
     profile_list_t profile_list;
     load_profile_list(&profile_list);
 
@@ -220,6 +217,7 @@ static void ensure_default_profile()
     strcpy(default_profile.name, "Default");
     default_profile.max_forward = 60.0f;
     default_profile.max_backward = 25.0f;
+    default_profile.is_drag_mode = false;
 
     esp_err_t ret = write_blob(key_buffer, &default_profile, sizeof(profile_t));
     if (ret == ESP_OK)
@@ -495,16 +493,11 @@ void get_current_profile(stored_profile_t **profile)
 
 esp_err_t get_all_profiles(stored_profile_list_t *list)
 {
-    ESP_LOGE(TAG, "get all profiles");
     if (!list)
         return ESP_ERR_INVALID_ARG;
 
-    ESP_LOGE(TAG, "get all profiles here");
-
     profile_list_t profile_ids;
     load_profile_list(&profile_ids);
-
-    ESP_LOGE(TAG, "Profile count: %d", profile_ids.count);
 
     list->count = 0;
 
@@ -539,18 +532,40 @@ esp_err_t save_profile(const char *profile_id, const profile_t *profile, bool *i
 
     if (ret == ESP_OK && !exists)
     {
-        add_profile_to_list(profile_id);
+        ret = add_profile_to_list(profile_id);
     }
 
     if (is_new)
         *is_new = !exists;
+
+    if (ret != ESP_OK)
+        return ret;
+
+    // Update current cached profile if this is the one being set
+    if (strcmp(profile_id, current_profile.id) == 0)
+    {
+        load_profile(profile_id, &current_profile.profile);
+    }
+
+    // Broadcast new state
+    static stored_profile_list_t list;
+    get_all_profiles(&list);
+    broadcast_profiles_response(&list);
+
     return ret;
 }
 
 esp_err_t delete_profile(const char *profile_id)
 {
     if (!profile_id)
+    {
         return ESP_ERR_INVALID_ARG;
+    }
+
+    if (strcmp(profile_id, current_profile.id) == 0)
+    {
+        return ESP_ERR_NOT_ALLOWED; // Cannot delete current profile
+    }
 
     char key_buffer[128];
     get_profile_key(profile_id, key_buffer, sizeof(key_buffer));
@@ -559,5 +574,14 @@ esp_err_t delete_profile(const char *profile_id)
     if (ret != ESP_OK)
         return ret;
 
-    return remove_profile_from_list(profile_id);
+    remove_profile_from_list(profile_id);
+    if (ret != ESP_OK)
+        return ret;
+
+    // Broadcast new state
+    static stored_profile_list_t list;
+    get_all_profiles(&list);
+    broadcast_profiles_response(&list);
+
+    return ret;
 }

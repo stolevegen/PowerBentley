@@ -224,16 +224,8 @@
   function deleteProfile(profileId) {
     sendMessage({
       type: 'delete_profile',
-      profileId: profileId,
+      profile_id: profileId,
     })
-
-    profiles = profiles.filter((c) => c.id !== profileId)
-    delete originalValues[profileId]
-
-    if (selectedProfileId === profileId) {
-      selectedProfileId = profiles[profiles.length - 1].id
-      hasUnsavedChanges = false
-    }
   }
 
   function saveProfile() {
@@ -286,6 +278,8 @@
     profilesUnsub = onMessageType('profiles_data', (data) => {
       profiles = data.profiles || []
       loading = false
+      hasUnsavedChanges = false
+      saving = false
 
       // Initialize original values
       profiles.forEach((profile) => {
@@ -299,28 +293,6 @@
       // Set selected profile to first available if current selection doesn't exist
       if (!profiles.find((c) => c.id === selectedProfileId)) {
         selectedProfileId = profiles[0]?.id || 'default'
-      }
-    })
-
-    saveUnsub = onMessageType('profile_saved', (data) => {
-      saving = false
-      if (data.status === 'success') {
-        // Update original values to reflect saved state
-        if (selectedProfile) {
-          originalValues[selectedProfileId] = {
-            maxForward: selectedProfile.maxForward,
-            maxBackward: selectedProfile.maxBackward,
-          }
-          hasUnsavedChanges = false
-        }
-      } else {
-        console.error('Failed to save profile:', data.message)
-      }
-    })
-
-    deleteUnsub = onMessageType('profile_deleted', (data) => {
-      if (data.status === 'error') {
-        console.error('Failed to delete profile:', data.message)
       }
     })
 

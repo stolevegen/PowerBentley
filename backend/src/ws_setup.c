@@ -6,26 +6,11 @@
 #include "storage.h"
 #include "esp_log.h"
 #include <string.h>
+#include "utils.h"
 
 static const char *TAG = "ws_setup";
 static char json[2048];
 static stored_profile_list_t list;
-
-// Helper function to create profile JSON object
-static cJSON *profile_to_json(const char *profile_id, const profile_t *profile)
-{
-    cJSON *json_profile = cJSON_CreateObject();
-    if (!json_profile)
-        return NULL;
-
-    cJSON_AddStringToObject(json_profile, "id", profile_id);
-    cJSON_AddStringToObject(json_profile, "name", profile->name);
-    cJSON_AddNumberToObject(json_profile, "maxForward", profile->max_forward);
-    cJSON_AddNumberToObject(json_profile, "maxBackward", profile->max_backward);
-    cJSON_AddNumberToObject(json_profile, "isDragMode", profile->is_drag_mode);
-
-    return json_profile;
-}
 
 static void get_wiring_json(char *buffer, size_t buffer_size, const wiring_t *wiring)
 {
@@ -41,6 +26,82 @@ static void get_wiring_json(char *buffer, size_t buffer_size, const wiring_t *wi
                  "{\"type\":\"wiring_response\",\"mode\":\"dual_input\",\"is_adc_throttle\":%s,\"min_threshold\":%f,\"max_threshold\":%f,\"inputs\":{\"forward\":%d,\"backward\":%d},\"outputs\":{\"forward_motor\":%d,\"backward_motor\":%d}}",
                  wiring->is_adc_throttle ? "true" : "false", wiring->min_threshold, wiring->max_threshold, wiring->forward_pin, wiring->backward_pin, wiring->forward_motor_pin, wiring->backward_motor_pin);
     }
+}
+
+static bool get_profile_json(char *buffer, size_t buffer_size, const char *id, const profile_t *profile)
+{
+    if (!buffer || !profile || buffer_size < 64)
+    {
+        ESP_LOGW(TAG, "Invalid arguments for get_profile_json");
+        return false;
+    }
+
+    // Escape string fields that might contain special characters
+    char escaped_name[64];
+    if (!json_escape_string(profile->name, escaped_name, sizeof(escaped_name)))
+    {
+        ESP_LOGW(TAG, "Failed to escape profile name");
+        return false;
+    }
+
+    int written = snprintf(buffer, buffer_size,
+                           "{\"id\":\"%s\",\"name\":%s,\"maxForward\":%f,\"maxBackward\":%f,\"isDragMode\":%s}",
+                           id, escaped_name, profile->max_forward, profile->max_backward, profile->is_drag_mode ? "true" : "false");
+
+    if (written < 0 || written >= buffer_size)
+    {
+        ESP_LOGW(TAG, "Profile JSON truncated or failed");
+        return false;
+    }
+
+    return true;
+}
+
+static bool get_profiles_json(char *buffer, size_t buffer_size, const stored_profile_list_t *profiles)
+{
+    if (!buffer || buffer_size < 64)
+        return false;
+
+    size_t pos = 0;
+
+    // Start JSON object and array
+    if (!safe_append(buffer, buffer_size, &pos, "{\"type\":\"profiles_data\",\"profiles\":["))
+    {
+        return false;
+    }
+
+    for (int i = 0; i < profiles->count; i++)
+    {
+        char profile_json[512]; // Adjust based on profile size
+        if (!get_profile_json(profile_json, sizeof(profile_json),
+                              profiles->items[i].id, &profiles->items[i].profile))
+        {
+            ESP_LOGW(TAG, "Failed to serialize profile %d", i);
+            continue;
+        }
+
+        // Add comma separator for subsequent items
+        if (i > 0)
+        {
+            if (!safe_append(buffer, buffer_size, &pos, ","))
+            {
+                return false;
+            }
+        }
+
+        if (!safe_append(buffer, buffer_size, &pos, profile_json))
+        {
+            return false;
+        }
+    }
+
+    // Close array and object
+    if (!safe_append(buffer, buffer_size, &pos, "]}"))
+    {
+        return false;
+    }
+
+    return true;
 }
 
 void ws_handle_setup_mode(const cJSON *root, int sockfd)
@@ -163,6 +224,32 @@ void ws_handle_set_current_profile(const cJSON *root, int sockfd)
     // Setting profile broadcast the new values
 }
 
+void send_profiles_response(int sockfd, const stored_profile_list_t *profiles)
+{
+    if (get_profiles_json(json, sizeof(json), profiles))
+    {
+        ESP_LOGI(TAG, "Send profiles response: %s", json);
+        send_message_sockfd(json, sockfd);
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Failed to construct profiles JSON");
+    }
+}
+
+void broadcast_profiles_response(const stored_profile_list_t *profiles)
+{
+    if (get_profiles_json(json, sizeof(json), profiles))
+    {
+        ESP_LOGI(TAG, "Broadcast profiles: %s", json);
+        broadcast_message(json);
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Failed to construct profiles JSON");
+    }
+}
+
 void ws_handle_get_profiles(const cJSON *root, int sockfd)
 {
     ESP_LOGI(TAG, "Getting profiles");
@@ -173,129 +260,74 @@ void ws_handle_get_profiles(const cJSON *root, int sockfd)
         return;
     }
 
-    ESP_LOGI(TAG, "Got profiles");
-
-    cJSON *response = cJSON_CreateObject();
-    cJSON *profiles = cJSON_CreateArray();
-    if (!response || !profiles)
-        return;
-
-    for (int i = 0; i < list.count; i++)
-    {
-        cJSON *json_profiles = profile_to_json(list.items[i].id, &list.items[i].profile);
-        if (json_profiles)
-        {
-            cJSON_AddItemToArray(profiles, json_profiles);
-        }
-    }
-    ESP_LOGI(TAG, "JSON profiles");
-
-    cJSON_AddStringToObject(response, "type", "profiles_data");
-    cJSON_AddItemToObject(response, "profiles", profiles);
-
-    char *json_string = cJSON_Print(response);
-    if (json_string)
-    {
-        send_message_sockfd(json_string, sockfd);
-        free(json_string);
-    }
-
-    cJSON_Delete(response);
+    send_profiles_response(sockfd, &list);
 }
 
 void ws_handle_save_profile(const cJSON *root, int sockfd)
 {
     cJSON *profile_json = cJSON_GetObjectItem(root, "profile");
     if (!profile_json)
+    {
+        ESP_LOGE(TAG, "Invalid json");
         return;
+    }
 
-    const char *profile_id = cJSON_GetStringValue(cJSON_GetObjectItem(profile_json, "id"));
-    const char *name = cJSON_GetStringValue(cJSON_GetObjectItem(profile_json, "name"));
-    float max_forward = (float)cJSON_GetNumberValue(cJSON_GetObjectItem(profile_json, "maxForward"));
-    float max_backward = (float)cJSON_GetNumberValue(cJSON_GetObjectItem(profile_json, "maxBackward"));
-    bool is_drag_mode = (float)cJSON_IsTrue(cJSON_GetObjectItem(profile_json, "isDragMode"));
+    const cJSON *id_node = cJSON_GetObjectItem(profile_json, "id");
+    const cJSON *name_node = cJSON_GetObjectItem(profile_json, "name");
+    const cJSON *max_forward_node = cJSON_GetObjectItem(profile_json, "maxForward");
+    const cJSON *max_backward_node = cJSON_GetObjectItem(profile_json, "maxBackward");
+    const cJSON *is_drag_mode_node = cJSON_GetObjectItem(profile_json, "isDragMode");
 
-    if (!profile_id || !name)
+    if (!cJSON_IsString(id_node) ||
+        !cJSON_IsString(name_node) ||
+        !cJSON_IsNumber(max_forward_node) ||
+        !cJSON_IsNumber(max_backward_node) ||
+        !cJSON_IsBool(is_drag_mode_node))
+    {
+        ESP_LOGE(TAG, "Invalid json");
         return;
+    }
 
     profile_t profile = {0};
-    strncpy(profile.name, name, sizeof(profile.name) - 1);
-    profile.max_forward = max_forward;
-    profile.max_backward = max_backward;
-    profile.is_drag_mode = is_drag_mode;
+    strncpy(profile.name, name_node->valuestring, sizeof(profile.name) - 1);
+    profile.max_forward = max_forward_node->valuedouble;
+    profile.max_backward = max_backward_node->valuedouble;
+    profile.is_drag_mode = cJSON_IsTrue(is_drag_mode_node);
 
     bool is_new;
-    esp_err_t ret = save_profile(profile_id, &profile, &is_new);
-
-    cJSON *response = cJSON_CreateObject();
-    cJSON_AddStringToObject(response, "type", "profile_saved");
-    cJSON_AddStringToObject(response, "profile_id", profile_id);
-
-    if (ret == ESP_OK)
+    esp_err_t ret = save_profile(id_node->valuestring, &profile, &is_new);
+    if (ret != ESP_OK)
     {
-        cJSON_AddStringToObject(response, "status", "success");
-    }
-    else
-    {
-        cJSON_AddStringToObject(response, "status", "error");
-        cJSON_AddStringToObject(response, "message", "Failed to save profile");
+        ESP_LOGE(TAG, "Failed to save profile: %s", esp_err_to_name(ret));
+        snprintf(json, sizeof(json),
+                 "{\"type\":\"error\",\"message\":\"Failed to save profile: %s\"}",
+                 esp_err_to_name(ret));
+        send_message_sockfd(json, sockfd);
+        return;
     }
 
-    char *json_string = cJSON_Print(response);
-    if (json_string)
-    {
-        send_message_sockfd(json_string, sockfd);
-        free(json_string);
-    }
-    cJSON_Delete(response);
+    // save_profile will broadcast the new profile configuration
 }
 
 void ws_handle_delete_profile(const cJSON *root, int sockfd)
 {
     const char *profile_id = cJSON_GetStringValue(cJSON_GetObjectItem(root, "profile_id"));
-    cJSON *response = cJSON_CreateObject();
 
     if (!profile_id)
+    {
+        ESP_LOGE(TAG, "Invalid json");
         return;
-
-    if (!is_valid_profile_id(profile_id))
-    {
-        cJSON_AddStringToObject(response, "type", "profile_deleted");
-        cJSON_AddStringToObject(response, "status", "error");
-        cJSON_AddStringToObject(response, "message", "Cannot delete this profile");
-        cJSON_AddStringToObject(response, "profile_id", profile_id);
-    }
-    else if (count_total_profiles() <= 1)
-    {
-        cJSON_AddStringToObject(response, "type", "profile_deleted");
-        cJSON_AddStringToObject(response, "status", "error");
-        cJSON_AddStringToObject(response, "message", "Cannot delete last profile");
-        cJSON_AddStringToObject(response, "profile_id", profile_id);
-    }
-    else
-    {
-        esp_err_t ret = delete_profile(profile_id);
-        if (ret == ESP_OK)
-        {
-            cJSON_AddStringToObject(response, "type", "profile_deleted");
-            cJSON_AddStringToObject(response, "status", "success");
-            cJSON_AddStringToObject(response, "profileId", profile_id);
-        }
-        else
-        {
-            cJSON_AddStringToObject(response, "type", "profile_deleted");
-            cJSON_AddStringToObject(response, "status", "error");
-            cJSON_AddStringToObject(response, "message", "Failed to delete profile");
-            cJSON_AddStringToObject(response, "profileId", profile_id);
-        }
     }
 
-    char *json_string = cJSON_Print(response);
-    if (json_string)
+    esp_err_t ret = delete_profile(profile_id);
+    if (ret == ESP_ERR_NOT_ALLOWED)
     {
-        send_message_sockfd(json_string, sockfd);
-        free(json_string);
+        ESP_LOGE(TAG, "Cannot delete the current profile");
+        snprintf(json, sizeof(json),
+                 "{\"type\":\"error\",\"message\":\"Cannot delete the current profile. Please select another profile first.\"}");
+        send_message_sockfd(json, sockfd);
+        return;
     }
 
-    cJSON_Delete(response);
+    // delete_profile will broadcast the new profile configuration
 }
