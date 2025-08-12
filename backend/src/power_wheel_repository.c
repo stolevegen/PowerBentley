@@ -397,7 +397,12 @@ esp_err_t set_wiring(const wiring_t *wiring)
         return ret;
     }
 
+    // Update current wiring configuration
     current_wiring.is_speed_direction = wiring->is_speed_direction;
+    current_wiring.is_adc_throttle = wiring->is_adc_throttle;
+    current_wiring.min_threshold = wiring->min_threshold;
+    current_wiring.max_threshold = wiring->max_threshold;
+    // Update current wiring pins
     current_wiring.forward_pin = wiring->forward_pin;
     current_wiring.backward_pin = wiring->backward_pin;
     current_wiring.throttle_pin = wiring->throttle_pin;

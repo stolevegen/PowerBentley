@@ -14,15 +14,21 @@ static stored_profile_list_t list;
 
 static void get_wiring_json(char *buffer, size_t buffer_size, const wiring_t *wiring)
 {
+    if (!buffer || !wiring || buffer_size < 64)
+    {
+        ESP_LOGW(TAG, "Invalid arguments for get_wiring_json");
+        return;
+    }
+
     if (wiring->is_speed_direction)
     {
-        snprintf(json, sizeof(json),
+        snprintf(buffer, buffer_size,
                  "{\"type\":\"wiring_response\",\"mode\":\"speed_direction\",\"is_adc_throttle\":%s,\"min_threshold\":%f,\"max_threshold\":%f,\"inputs\":{\"forward\":%d,\"backward\":%d,\"throttle\":%d},\"outputs\":{\"forward_motor\":%d,\"backward_motor\":%d}}",
                  wiring->is_adc_throttle ? "true" : "false", wiring->min_threshold, wiring->max_threshold, wiring->forward_pin, wiring->backward_pin, wiring->throttle_pin, wiring->forward_motor_pin, wiring->backward_motor_pin);
     }
     else
     {
-        snprintf(json, sizeof(json),
+        snprintf(buffer, buffer_size,
                  "{\"type\":\"wiring_response\",\"mode\":\"dual_input\",\"is_adc_throttle\":%s,\"min_threshold\":%f,\"max_threshold\":%f,\"inputs\":{\"forward\":%d,\"backward\":%d},\"outputs\":{\"forward_motor\":%d,\"backward_motor\":%d}}",
                  wiring->is_adc_throttle ? "true" : "false", wiring->min_threshold, wiring->max_threshold, wiring->forward_pin, wiring->backward_pin, wiring->forward_motor_pin, wiring->backward_motor_pin);
     }
