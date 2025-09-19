@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Felix's PowerBentley</title>
+  <title>PowerBentley</title>
   <meta name="viewport"
         content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
 
@@ -74,9 +74,7 @@
     .kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 10px; font-size: 14px; }
     .kv div:nth-child(odd) { color: var(--muted); }
 
-    .speed {
-      font-size: 42px; font-weight: 800; letter-spacing: 0.5px;
-    }
+    .speed { font-size: 42px; font-weight: 800; letter-spacing: 0.5px; }
   </style>
 </head>
 <body>
@@ -91,13 +89,16 @@
     </div>
   </header>
 
-  <!-- Live speed + emergency stop -->
+  <!-- Live speed + emergency stop + runtime -->
   <section class="card">
     <h2>Drive</h2>
     <div class="row" style="align-items:center; justify-content: space-between;">
       <div>
         <div class="muted">Current speed</div>
         <div id="speed" class="speed">0%</div>
+        <div class="muted" style="margin-top:6px;">
+          Total runtime: <span id="runtime">0h 00m</span>
+        </div>
       </div>
       <div class="btnrow">
         <button class="danger" onclick="emergencyStop(true)">Emergency Stop</button>
@@ -216,9 +217,10 @@
 
       ws.onopen = () => {
         setWsStatus('ok','Connected');
-        // Ask for current configs
+        // Ask for current configs + runtime
         send({ command: 'get_sta' });
         send({ command: 'get_mqtt' });
+        send({ command: 'get_runtime' });
       };
 
       ws.onclose = () => setWsStatus('warn','Disconnected');
@@ -231,6 +233,14 @@
           // Telemetry payload from device (broadcast_all_values)
           if (typeof data.current_speed === 'number') {
             updateSpeed(data);
+            if (typeof data.total_runtime_s === 'number') {
+              document.getElementById('runtime').textContent = fmtRuntime(data.total_runtime_s);
+            }
+          }
+
+          // Runtime push from runtime_task save
+          if (data.type === 'runtime' && typeof data.total_runtime_s === 'number') {
+            document.getElementById('runtime').textContent = fmtRuntime(data.total_runtime_s);
           }
 
           // STA acks/info/status
@@ -278,7 +288,7 @@
           if (data.type === 'mqtt_status') {
             updateMqttPill(!!data.connected, data.uri || '', data.base || '');
           }
-        } catch (e) { /* ignore */ }
+        } catch (e) { /* ignore non-JSON */ }
       };
     }
 
@@ -304,6 +314,13 @@
         mb.value = d.max_backward;
         document.getElementById('lbl-mb').textContent = d.max_backward;
       }
+    }
+
+    function fmtRuntime(sec) {
+      sec = Math.max(0, Math.floor(Number(sec)||0));
+      const h = Math.floor(sec/3600);
+      const m = Math.floor((sec%3600)/60);
+      return `${h}h ${String(m).padStart(2,'0')}m`;
     }
 
     function setStaStatus(text) {
@@ -379,7 +396,7 @@
     function saveMqtt() {
       const uri  = document.getElementById('mqtt-uri').value.trim();
       const user = document.getElementById('mqtt-user').value.trim();
-      const pass = document.getElementById('mqtt-pass').value; // keep plaintext in UI only
+      const pass = document.getElementById('mqtt-pass').value; // UI only
       const base = document.getElementById('mqtt-base').value.trim();
       if (!uri) { setMqttStatus('Broker URI is required.'); return; }
       const ok = send({ command: 'set_mqtt', parameters: { uri, username: user, password: pass, base_topic: base }});
@@ -401,3 +418,4 @@
   </script>
 </body>
 </html>
+
