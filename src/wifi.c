@@ -17,8 +17,8 @@
 #include "mqtt.h"      // <— optional: start/stop on link events (ok if you add later)
 
 /* --------- AP (captive portal) --------- */
-#define AP_SSID        "PowerJeep"
-#define AP_PASS        "Rubicon!"
+#define AP_SSID        "PowerBentley"
+#define AP_PASS        "Bentley!"
 #define AP_CHANNEL     10
 #define AP_MAX_CONN    4
 
