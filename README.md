@@ -3,7 +3,7 @@
 > Upgrade your electric ride on car with a 18v Milwaukee battery and ESP32-powered electronics.
 
 <div align="center">
-   <img src="./docs/header.jpg" alt="screenshot of the web interface" width="600px"/>
+   <img src="./docs/header.png" alt="screenshot of the web interface" width="600px"/>
 </div>
 
 ## Table of Contents
