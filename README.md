@@ -1,8 +1,6 @@
-# PowerJeep. A Ryobi Battery Conversion for Ride on Cars
+# PowerBentley. A Milwaukee M18 Battery Conversion for Ride on Cars
 
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
-> Upgrade your electric ride on car with a 18v Ryobi battery and ESP32-powered electronics.
+> Upgrade your electric ride on car with a 18v Milwaukee battery and ESP32-powered electronics.
 
 <div align="center">
    <img src="./docs/header.jpg" alt="screenshot of the web interface" width="600px"/>
@@ -20,15 +18,15 @@
 
 ## Introduction
 
-Welcome to the Ryobi Battery Conversion project for ride on cars!
+Welcome to the Milwaukee Battery Conversion project for ride on cars!
 
-This project aims to replace the old lead battery in your electric ride on car with a modern 18v Ryobi battery, providing improved performance!
+This project aims to replace the old lead battery in your electric ride on car with a modern 18v Milwaukee battery, providing improved performance!
 
 By utilizing an ESP32 microcontroller, we enable enhanced control and monitoring capabilities for a safe and more enjoyable driving experience for every rider.
 
 ## Features
 
-- **Ryobi Battery Integration:** Upgrade your kid car's power source to a Ryobi battery for extended runtime and enhanced performance.
+- **Milwaukee Battery Integration:** Upgrade your kid car's power source to a Milwaukee battery for extended runtime and enhanced performance.
 - **ESP32 Control:** Utilize the ESP32 microcontroller for precise control, monitoring, and remote safety features.
 - **Real-time Data Display:** Monitor the speed, configure and update the car through a sleek web-based dashboard.
 - **Battery Protection:** Use safeguards to prevent over use and deep discharging.
@@ -42,7 +40,7 @@ By utilizing an ESP32 microcontroller, we enable enhanced control and monitoring
 To replicate this project, you'll need the following things:
 
 - Ride on car with a functionnal motor
-- 18v Ryobi battery and charger
+- 18v Milwaukee battery and charger
 - 3D printer
 - Basic hand tools (screwdriver, wire cutter/stripper, soldering iron)
 
@@ -51,7 +49,7 @@ To replicate this project, you'll need the following things:
 - 1x ESP32 [On Amazon](https://www.amazon.com/ESP-WROOM-32-Development-Microcontroller-Integrated-Compatible/dp/B08D5ZD528)
 - 1x or 2x LM2596 - Voltage Regulator [On Amazon](https://www.amazon.com/gp/product/B08BLBYWN1)
 - 1x XH-M609 - DC 12V-36V Voltage Protection Module [On Amazon](https://www.amazon.com/gp/product/B08X3HZ69D)
-- 1x BTS7960 43A High Power Motor Driver Module [On Amazon](https://www.amazon.com/gp/product/B07TFB22H5)
+- 2x BTS7960 43A High Power Motor Driver Module [On Amazon](https://www.amazon.com/gp/product/B07TFB22H5)
 - 1x 30A Circuit Breaker [On Amazon](https://www.amazon.com/gp/product/B096ZTV3CR)
 - Wires and connectors
 
