@@ -9,6 +9,8 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
+#include "esp_wifi.h"
+#include "esp_netif.h"
 
 #include "websocket.h"
 #include "cJSON.h"
@@ -75,6 +77,8 @@ static uint32_t led_sleep_delay = 500;
 static void drive_task(void *pvParameter);
 static void broadcast_speed_task(void *pvParameter);
 static void led_task(void *pvParameter);
+static void sta_status_task(void *pvParameter);
+static void broadcast_sta_status(void);
 
 #if WITH_ADC_THROTTLE
 static bool adc_calibration_enabled = false;
@@ -124,6 +128,27 @@ static void data_received(httpd_ws_frame_t* ws_pkt) {
         free(ack);
       }
     }
+    goto end;
+  }
+
+  // Provide current saved STA SSID to prefill UI
+  if (strcmp("get_sta", command) == 0) {
+    char ssid_buf[33] = {0};
+    readString("sta_ssid", ssid_buf, sizeof(ssid_buf), "");
+    char *msg;
+    asprintf(&msg, "{\"type\":\"sta_info\",\"ssid\":\"%s\"}", ssid_buf);
+    broadcast_message(msg);
+    free(msg);
+    goto end;
+  }
+
+  // Clear STA credentials (AP-only mode)
+  if (strcmp("clear_sta", command) == 0) {
+    wifi_set_sta_credentials("", "");
+    char *ack;
+    asprintf(&ack, "{\"ok\":true,\"type\":\"clear_sta\"}");
+    broadcast_message(ack);
+    free(ack);
     goto end;
   }
 
@@ -274,6 +299,9 @@ void setup_driving(void) {
 
   // Create a task for the blinking LED
   xTaskCreate(&led_task, "led_task", 2048, NULL, 5, NULL);
+
+  // Create a task for Wi-Fi STA link status broadcast
+  xTaskCreate(&sta_status_task, "sta_status_task", 2048, NULL, 5, NULL);
 }
 
 // Return the targeted speed based on the pedal status.
@@ -449,6 +477,38 @@ static void blink_led_running(float speed) {
     } else {
       led_sleep_delay = 60;
     }
+  }
+}
+
+// Periodically broadcast STA link status for UI indicator
+static void broadcast_sta_status(void) {
+  bool connected = false;
+  char ipstr[16] = "0.0.0.0";
+
+  wifi_ap_record_t ap_info;
+  if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+    connected = true;
+  }
+
+  esp_netif_t* sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  if (sta) {
+    esp_netif_ip_info_t ip;
+    if (esp_netif_get_ip_info(sta, &ip) == ESP_OK) {
+      snprintf(ipstr, sizeof(ipstr), "%d.%d.%d.%d", IP2STR(&ip.ip));
+    }
+  }
+
+  char *msg;
+  asprintf(&msg, "{\"type\":\"sta_status\",\"connected\":%s,\"ip\":\"%s\"}",
+           connected ? "true" : "false", ipstr);
+  broadcast_message(msg);
+  free(msg);
+}
+
+static void sta_status_task(void *pvParameter) {
+  while (true) {
+    broadcast_sta_status();
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
   }
 }
 
