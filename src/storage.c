@@ -63,5 +63,21 @@ esp_err_t writeString(const char* key, const char* value) {
   return nvs_commit(storage);
 }
 
+esp_err_t readUInt64(const char* key, uint64_t* out, uint64_t def) {
+  if (!out) return ESP_ERR_INVALID_ARG;
+  *out = def;
+  uint64_t v = 0;
+  size_t len = sizeof(v);
+  esp_err_t ret = nvs_get_blob(storage, key, &v, &len);
+  if (ret == ESP_OK && len == sizeof(v)) { *out = v; }
+  return ret;
+}
+
+esp_err_t writeUInt64(const char* key, uint64_t value) {
+  esp_err_t ret = nvs_set_blob(storage, key, &value, sizeof(value));
+  if (ret != ESP_OK) return ret;
+  return nvs_commit(storage);
+}
+
   return nvs_commit(storage);
 }
