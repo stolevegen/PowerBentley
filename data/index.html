@@ -159,6 +159,43 @@
     <div id="sta-status" class="muted" style="margin-top:8px; min-height:1.2em;"></div>
   </section>
 
+  <!-- MQTT config -->
+  <section class="card">
+    <h2>MQTT</h2>
+    <div class="row" style="align-items:center; justify-content: space-between;">
+      <div>
+        <span id="mqtt-pill" class="pill warn"><span class="dot"></span><span id="mqtt-pill-text">Unknown</span></span>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <div style="flex:1; min-width: 240px;">
+        <label>Broker URI</label>
+        <input id="mqtt-uri" type="text" placeholder="mqtt://192.168.1.10:1883">
+      </div>
+      <div style="flex:1; min-width: 240px;">
+        <label>Username</label>
+        <input id="mqtt-user" type="text" placeholder="(optional)">
+      </div>
+      <div style="flex:1; min-width: 240px;">
+        <label>Password</label>
+        <input id="mqtt-pass" type="password" placeholder="(optional)">
+      </div>
+      <div style="flex:1; min-width: 240px;">
+        <label>Base topic</label>
+        <input id="mqtt-base" type="text" placeholder="powerjeep">
+      </div>
+    </div>
+
+    <div class="btnrow" style="margin-top:12px;">
+      <button onclick="saveMqtt()">Save & Restart MQTT</button>
+      <button class="ghost" onclick="prefillMqtt()">Prefill from device</button>
+      <button class="danger" onclick="clearMqtt()">Clear MQTT config</button>
+    </div>
+
+    <div id="mqtt-status" class="muted" style="margin-top:8px; min-height:1.2em;"></div>
+  </section>
+
   <script>
     // -------------------------
     // WebSocket bootstrapping
@@ -179,8 +216,9 @@
 
       ws.onopen = () => {
         setWsStatus('ok','Connected');
-        // Ask device to send saved SSID so we can prefill
+        // Ask for current configs
         send({ command: 'get_sta' });
+        send({ command: 'get_mqtt' });
       };
 
       ws.onclose = () => setWsStatus('warn','Disconnected');
@@ -195,14 +233,12 @@
             updateSpeed(data);
           }
 
-          // Acks for STA ops
+          // STA acks/info/status
           if (data.type === 'set_sta') {
             if (data.ok) {
               setStaStatus(`Saved. Connecting to "${data.ssid}"…`);
               document.getElementById('sta-saved-ssid').textContent = data.ssid || '—';
-            } else {
-              setStaStatus(data.error || 'Failed to save credentials');
-            }
+            } else setStaStatus(data.error || 'Failed to save STA.');
           }
           if (data.type === 'clear_sta') {
             if (data.ok) {
@@ -212,21 +248,37 @@
               document.getElementById('sta-pass').value = '';
             }
           }
-
-          // Prefill info
           if (data.type === 'sta_info') {
             document.getElementById('sta-saved-ssid').textContent = data.ssid || '—';
-            // do not autofill password for safety; user enters it
             if (data.ssid) document.getElementById('sta-ssid').value = data.ssid;
           }
-
-          // Live link state
           if (data.type === 'sta_status') {
             updateStaPill(!!data.connected, data.ip || '0.0.0.0');
           }
-        } catch (e) {
-          // ignore non-JSON
-        }
+
+          // MQTT acks/info/status
+          if (data.type === 'set_mqtt') {
+            if (data.ok) setMqttStatus(`Saved. Restarting MQTT → ${data.uri}`);
+          }
+          if (data.type === 'clear_mqtt') {
+            if (data.ok) {
+              setMqttStatus('MQTT config cleared.');
+              document.getElementById('mqtt-uri').value = '';
+              document.getElementById('mqtt-user').value = '';
+              document.getElementById('mqtt-pass').value = '';
+              document.getElementById('mqtt-base').value = '';
+            }
+          }
+          if (data.type === 'mqtt_info') {
+            document.getElementById('mqtt-uri').value  = data.uri || '';
+            document.getElementById('mqtt-user').value = data.username || '';
+            // do not set password field for safety
+            document.getElementById('mqtt-base').value = data.base || '';
+          }
+          if (data.type === 'mqtt_status') {
+            updateMqttPill(!!data.connected, data.uri || '', data.base || '');
+          }
+        } catch (e) { /* ignore */ }
       };
     }
 
@@ -257,7 +309,6 @@
     function setStaStatus(text) {
       document.getElementById('sta-status').textContent = text || '';
     }
-
     function updateStaPill(connected, ip) {
       const pill = document.getElementById('sta-pill');
       const label = document.getElementById('sta-pill-text');
@@ -274,6 +325,24 @@
       ipEl.textContent = ip || '0.0.0.0';
     }
 
+    function setMqttStatus(text) {
+      document.getElementById('mqtt-status').textContent = text || '';
+    }
+    function updateMqttPill(connected, uri, base) {
+      const pill = document.getElementById('mqtt-pill');
+      const label = document.getElementById('mqtt-pill-text');
+
+      pill.classList.remove('ok','err','warn');
+      if (connected) {
+        pill.classList.add('ok');
+        label.textContent = `MQTT: Connected`;
+      } else {
+        pill.classList.add('warn');
+        label.textContent = `MQTT: Not connected`;
+      }
+      if (uri) setMqttStatus(`${connected ? 'Connected' : 'Not connected'} to ${uri}${base? ' (base '+base+')' : ''}`);
+    }
+
     // -------------------------
     // Commands
     // -------------------------
@@ -287,27 +356,44 @@
       send({ command: 'update_max', parameters: { max_forward: mf, max_backward: mb } });
     }
 
+    // STA
     function sendStaCreds() {
       const ssid = document.getElementById('sta-ssid').value.trim();
       const pass = document.getElementById('sta-pass').value;
-      if (!ssid) {
-        setStaStatus('SSID cannot be empty.');
-        return;
-      }
+      if (!ssid) { setStaStatus('SSID cannot be empty.'); return; }
       const ok = send({ command: 'set_sta', parameters: { ssid, password: pass }});
       if (ok) setStaStatus('Saving…');
       else setStaStatus('WebSocket not connected.');
     }
-
     function clearSta() {
       const ok = send({ command: 'clear_sta' });
       if (ok) setStaStatus('Clearing…');
       else setStaStatus('WebSocket not connected.');
     }
-
     function prefillSta() {
       const ok = send({ command: 'get_sta' });
       if (!ok) setStaStatus('WebSocket not connected.');
+    }
+
+    // MQTT
+    function saveMqtt() {
+      const uri  = document.getElementById('mqtt-uri').value.trim();
+      const user = document.getElementById('mqtt-user').value.trim();
+      const pass = document.getElementById('mqtt-pass').value; // keep plaintext in UI only
+      const base = document.getElementById('mqtt-base').value.trim();
+      if (!uri) { setMqttStatus('Broker URI is required.'); return; }
+      const ok = send({ command: 'set_mqtt', parameters: { uri, username: user, password: pass, base_topic: base }});
+      if (ok) setMqttStatus('Saving… restarting MQTT…');
+      else setMqttStatus('WebSocket not connected.');
+    }
+    function prefillMqtt() {
+      const ok = send({ command: 'get_mqtt' });
+      if (!ok) setMqttStatus('WebSocket not connected.');
+    }
+    function clearMqtt() {
+      const ok = send({ command: 'clear_mqtt' });
+      if (ok) setMqttStatus('Clearing MQTT config…');
+      else setMqttStatus('WebSocket not connected.');
     }
 
     // Boot
