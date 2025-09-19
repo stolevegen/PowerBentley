@@ -17,13 +17,13 @@
 #include "storage.h"
 #include "utils.h"
 #include "wifi.h"
+#include "mqtt.h"
 
 // ================
 // ==== MACROS ====
 // ================
 
 // ADC throttle capability
-
 #define WITH_ADC_THROTTLE 0
 
 #if WITH_ADC_THROTTLE
@@ -106,10 +106,13 @@ static void data_received(httpd_ws_frame_t* ws_pkt) {
   ESP_LOGI(TAG, "Received packet with message: %s", ws_pkt->payload);
 
   cJSON *root = cJSON_Parse((char*)ws_pkt->payload);
-  char* command = cJSON_GetObjectItem(root, "command")->valuestring;
+  if (!root) return;
+  cJSON *cmdNode = cJSON_GetObjectItem(root, "command");
+  if (!cJSON_IsString(cmdNode)) { cJSON_Delete(root); return; }
+  char* command = cmdNode->valuestring;
   ESP_LOGI(TAG, "Command: %s", command);
 
-  // Handle STA Wi-Fi credentials set from UI
+  // ----- STA Wi-Fi: save credentials -----
   if (strcmp("set_sta", command) == 0) {
     cJSON* parameters = cJSON_GetObjectItem(root, "parameters");
     if (parameters) {
@@ -131,7 +134,7 @@ static void data_received(httpd_ws_frame_t* ws_pkt) {
     goto end;
   }
 
-  // Provide current saved STA SSID to prefill UI
+  // ----- STA Wi-Fi: get saved SSID for prefill -----
   if (strcmp("get_sta", command) == 0) {
     char ssid_buf[33] = {0};
     readString("sta_ssid", ssid_buf, sizeof(ssid_buf), "");
@@ -142,7 +145,7 @@ static void data_received(httpd_ws_frame_t* ws_pkt) {
     goto end;
   }
 
-  // Clear STA credentials (AP-only mode)
+  // ----- STA Wi-Fi: clear creds (AP-only) -----
   if (strcmp("clear_sta", command) == 0) {
     wifi_set_sta_credentials("", "");
     char *ack;
@@ -152,6 +155,57 @@ static void data_received(httpd_ws_frame_t* ws_pkt) {
     goto end;
   }
 
+  // ----- MQTT: set config (uri/user/pass/base_topic) -----
+  if (strcmp("set_mqtt", command) == 0) {
+    cJSON* p = cJSON_GetObjectItem(root, "parameters");
+    if (p) {
+      mqtt_config_t cfg;
+      mqtt_get_config(&cfg); // start from current
+      cJSON* uri  = cJSON_GetObjectItem(p, "uri");
+      cJSON* user = cJSON_GetObjectItem(p, "username");
+      cJSON* pass = cJSON_GetObjectItem(p, "password");
+      cJSON* base = cJSON_GetObjectItem(p, "base_topic");
+      if (cJSON_IsString(uri))  { strncpy(cfg.uri, uri->valuestring, sizeof(cfg.uri)-1); }
+      if (cJSON_IsString(user)) { strncpy(cfg.username, user->valuestring, sizeof(cfg.username)-1); }
+      if (cJSON_IsString(pass)) { strncpy(cfg.password, pass->valuestring, sizeof(cfg.password)-1); }
+      if (cJSON_IsString(base)) { strncpy(cfg.base_topic, base->valuestring, sizeof(cfg.base_topic)-1); }
+
+      mqtt_save_config_to_nvs(&cfg);
+      mqtt_apply_config_and_restart();
+
+      char *ack;
+      asprintf(&ack, "{\"ok\":true,\"type\":\"set_mqtt\",\"uri\":\"%s\",\"base\":\"%s\"}", cfg.uri, cfg.base_topic);
+      broadcast_message(ack);
+      free(ack);
+    }
+    goto end;
+  }
+
+  // ----- MQTT: get config (no password echoed) -----
+  if (strcmp("get_mqtt", command) == 0) {
+    mqtt_config_t cfg;
+    mqtt_get_config(&cfg);
+    char *msg;
+    asprintf(&msg, "{\"type\":\"mqtt_info\",\"uri\":\"%s\",\"username\":\"%s\",\"base\":\"%s\"}",
+             cfg.uri, cfg.username, cfg.base_topic);
+    broadcast_message(msg);
+    free(msg);
+    goto end;
+  }
+
+  // ----- MQTT: clear config -----
+  if (strcmp("clear_mqtt", command) == 0) {
+    mqtt_config_t cfg; memset(&cfg, 0, sizeof(cfg));
+    mqtt_save_config_to_nvs(&cfg);
+    mqtt_apply_config_and_restart();
+    char *ack;
+    asprintf(&ack, "{\"ok\":true,\"type\":\"clear_mqtt\"}");
+    broadcast_message(ack);
+    free(ack);
+    goto end;
+  }
+
+  // ----- Speed limits -----
   if (strcmp("update_max", command) == 0) {
     cJSON* parameters = cJSON_GetObjectItem(root, "parameters");
     if (parameters == NULL) {
@@ -174,6 +228,7 @@ static void data_received(httpd_ws_frame_t* ws_pkt) {
     goto end;
   }
 
+  // ----- Emergency stop -----
   if (strcmp("emergency_stop", command) == 0) {
     cJSON* parameters = cJSON_GetObjectItem(root, "parameters");
     if (parameters == NULL) {
@@ -531,4 +586,3 @@ broadcast_all_values() {
   broadcast_message(message);
   free(message);
 }
-
