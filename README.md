@@ -100,7 +100,7 @@ You can also drag & drop any static files, like `index.html`. In that case it do
 - Turn on the fuse and drive!
 - Don't forget to turn the fuse off when you are done.
 - To go further
-  - Connect your computer or mobile device to the Wi-Fi network emitted by the car. By default it emits an access point "PowerJeep" with password "Rubicon!"
+  - Connect your computer or mobile device to the Wi-Fi network emitted by the car. By default it emits an access point "PowerBentley" with password "Bentley!"
   - It should open the page automatically as a captive portal. If it doesn't, open a web browser and enter the IP address http://192.168.4.1 to access the dashboard.
   - Use the interface to configure the car and view real-time speed. Emergency stop turns off the motor immediately.
 
