@@ -72,6 +72,9 @@ static float max_backward = DEFAULT_BACKWARD_MAX_SPEED;
 static bool emergency_stop = false;
 
 static uint32_t led_sleep_delay = 500;
+static uint64_t total_runtime_s = 0;       // persisted
+static const uint32_t RUNTIME_SAVE_PERIOD_S = 60;
+
 
 // Prototypes
 static void drive_task(void *pvParameter);
@@ -79,6 +82,7 @@ static void broadcast_speed_task(void *pvParameter);
 static void led_task(void *pvParameter);
 static void sta_status_task(void *pvParameter);
 static void broadcast_sta_status(void);
+static void runtime_task(void *pvParameter);
 
 #if WITH_ADC_THROTTLE
 static bool adc_calibration_enabled = false;
@@ -336,6 +340,7 @@ void setup_driving(void) {
   // Retrieve max values from storage
   readFloat("max_forward", &max_forward, DEFAULT_FORWARD_MAX_SPEED);
   readFloat("max_backward", &max_backward, DEFAULT_BACKWARD_MAX_SPEED);
+  readUInt64("total_runtime_s", &total_runtime_s, 0);
 
   // Setup pins
   setup_pin();
@@ -357,6 +362,10 @@ void setup_driving(void) {
 
   // Create a task for Wi-Fi STA link status broadcast
   xTaskCreate(&sta_status_task, "sta_status_task", 2048, NULL, 5, NULL);
+
+  // Track total runtime (seconds while moving), persist periodically
+  xTaskCreate(&runtime_task, "runtime_task", 2048, NULL, 5, NULL);
+
 }
 
 // Return the targeted speed based on the pedal status.
@@ -466,6 +475,34 @@ static void led_task(void *pvParameter) {
     vTaskDelay(led_sleep_delay / portTICK_PERIOD_MS);
     gpio_set_level(STATUS_LED_PIN, 1);
     vTaskDelay(led_sleep_delay / portTICK_PERIOD_MS);
+  }
+}
+
+static void runtime_task(void *pvParameter) {
+  uint32_t acc_save = 0; // seconds since last save
+  const TickType_t one_sec = 1000 / portTICK_PERIOD_MS;
+
+  for (;;) {
+    // Count only when moving (ignore tiny noise around 0)
+    if (fabsf(current_speed) >= 1.0f && !emergency_stop) {
+      total_runtime_s++;
+      acc_save++;
+    }
+
+    // Persist every RUNTIME_SAVE_PERIOD_S seconds
+    if (acc_save >= RUNTIME_SAVE_PERIOD_S) {
+      writeUInt64("total_runtime_s", total_runtime_s);
+      acc_save = 0;
+
+      // Optional: broadcast an update so UI/MQTT can reflect it
+      // (We also send it in broadcast_all_values periodically)
+      char *msg;
+      asprintf(&msg, "{\"type\":\"runtime\",\"total_runtime_s\":%llu}", (unsigned long long)total_runtime_s);
+      broadcast_message(msg);
+      free(msg);
+    }
+
+    vTaskDelay(one_sec);
   }
 }
 
@@ -580,8 +617,9 @@ static void sta_status_task(void *pvParameter) {
 //}
 broadcast_all_values() {
   char *message;
-  char *format = "{\"current_speed\":%f,\"max_forward\":%f,\"max_backward\":%f,\"emergency_stop\":%s}";
-  asprintf(&message, format, current_speed, max_forward, max_backward, emergency_stop ? "true" : "false");
+  char *format = "{\"current_speed\":%f,\"max_forward\":%f,\"max_backward\":%f,\"emergency_stop\":%s,\"total_runtime_s\":%llu}";
+  asprintf(&message, format, current_speed, max_forward, max_backward,
+           emergency_stop ? "true" : "false", (unsigned long long)total_runtime_s);
   ESP_LOGI(TAG, "Send %s", message);
   broadcast_message(message);
   free(message);
