@@ -34,5 +34,34 @@ esp_err_t writeFloat(char* key, float value) {
   esp_err_t ret = nvs_set_blob(storage, key, &value, sizeof(float));
   if (ret != ESP_OK) return ret;
 
+  esp_err_t readString(const char* key, char* out, size_t out_len, const char* def) {
+  if (!out || out_len == 0) return ESP_ERR_INVALID_ARG;
+
+  // Default
+  if (def) {
+    strncpy(out, def, out_len - 1);
+    out[out_len - 1] = '\0';
+  } else {
+    out[0] = '\0';
+  }
+
+  // Query size
+  size_t required = 0;
+  esp_err_t ret = nvs_get_str(storage, key, NULL, &required);
+  if (ret != ESP_OK) return ret;
+
+  if (required == 0 || required > out_len) return ESP_ERR_NVS_INVALID_LENGTH;
+
+  return nvs_get_str(storage, key, out, &required);
+}
+
+esp_err_t writeString(const char* key, const char* value) {
+  if (!value) value = "";
+  ESP_LOGI("Storage", "Store string for key %s: '%s'", key, value);
+  esp_err_t ret = nvs_set_str(storage, key, value);
+  if (ret != ESP_OK) return ret;
+  return nvs_commit(storage);
+}
+
   return nvs_commit(storage);
 }
