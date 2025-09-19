@@ -11,7 +11,7 @@ typedef struct {
   char uri[128];      // e.g. "mqtt://192.168.1.10:1883" or "mqtts://host:8883"
   char username[64];
   char password[64];
-  char base_topic[64]; // e.g. "powerjeep"
+  char base_topic[64]; // e.g. "powerbentley"
 } mqtt_config_t;
 
 void mqtt_load_config_from_nvs(mqtt_config_t *out);             // fills defaults if unset
