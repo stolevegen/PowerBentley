@@ -14,12 +14,11 @@
 #include "cJSON.h"
 #include "storage.h"
 #include "utils.h"
+#include "wifi.h"
 
-static const char *TAG = "drive";
-
-static void drive_task(void *pvParameter);
-static void broadcast_speed_task(void *pvParameter);
-static void led_task(void *pvParameter);
+// ================
+// ==== MACROS ====
+// ================
 
 // ADC throttle capability
 
@@ -32,95 +31,102 @@ static void led_task(void *pvParameter);
 
 // PIN
 
-// - Inputs
-#if WITH_ADC_THROTTLE
 #define GAS_PEDAL_FORWARD_PIN ADC1_CHANNEL_4 // GPIO 32
 #define GAS_PEDAL_BACKWARD_PIN ADC1_CHANNEL_5 // GPIO 33
-#else
+
 #define GAS_PEDAL_FORWARD_PIN GPIO_NUM_32
 #define GAS_PEDAL_BACKWARD_PIN GPIO_NUM_33
-#endif
-// - Outputs
+
 #define FORWARD_PWM_PIN GPIO_NUM_18
 #define BACKWARD_PWM_PIN GPIO_NUM_19
 #define STATUS_LED_PIN GPIO_NUM_2
 
-// Constants
+// Behavior
 
 #define FORWARD_SHUTOFF_THRESOLD 15 // %
 #define BACKWARD_SHUTOFF_THRESOLD 10 // %
 
-// - With a 18v battery, 66% is equivalent to a 12v
 #define DEFAULT_FORWARD_MAX_SPEED 60 // %
 #define DEFAULT_BACKWARD_MAX_SPEED 35 // %
 
 #define SPEED_INCREMENT 0.5f // % of increment per loop
+
+// PWM
 
 #define MOTOR_PWM_CHANNEL_FORWARD LEDC_CHANNEL_1
 #define MOTOR_PWM_CHANNEL_BACKWARD LEDC_CHANNEL_2
 #define MOTOR_PWM_TIMER LEDC_TIMER_1
 #define MOTOR_PWM_DUTY_RESOLUTION LEDC_TIMER_10_BIT
 
-// Variables in memory
+// ===============
+// ==== STATE ====
+// ===============
 
-float current_speed = 0;
-float emergency_stop = false;
-float max_forward = 0;
-float max_backward = 0;
-int led_sleep_delay = 20;
+static const char *TAG = "power_wheel";
+
+static float current_speed = 0.0f;
+static float max_forward = DEFAULT_FORWARD_MAX_SPEED;
+static float max_backward = DEFAULT_BACKWARD_MAX_SPEED;
+static bool emergency_stop = false;
+
+static uint32_t led_sleep_delay = 500;
+
+// Prototypes
+static void drive_task(void *pvParameter);
+static void broadcast_speed_task(void *pvParameter);
+static void led_task(void *pvParameter);
 
 #if WITH_ADC_THROTTLE
-static esp_adc_cal_characteristics_t adc1_chars;
-bool adc_calibration_enabled = false;
-uint32_t adc_average = 0;
-uint32_t adc_voltage = 0;
+static bool adc_calibration_enabled = false;
+static bool adc_calibration_init(void);
+static void adc_read_pedals(uint8_t* forward_position, uint8_t* backward_position);
+#else
+static void buttons_read_pedals(uint8_t* forward_position, uint8_t* backward_position);
 #endif
 
-// ***************
-// **** WEBSOCKETS
-// ***************
+static void setup_pin();
+static void setup_pwm();
 
-// Broadcast all values
-// {
-//   "current_speed": 12,
-//   "max_forward": 66,
-//   "max_backward": 50,
-//   "emergency_stop": false
-//}
-void broadcast_all_values() {
-  char *message;
-  char *format = "{\"current_speed\":%f,\"max_forward\":%f,\"max_backward\":%f,\"emergency_stop\":%s}";
-  asprintf(&message, format, current_speed, max_forward, max_backward, emergency_stop ? "true" : "false");
-  ESP_LOGI(TAG, "Send %s", message);
-  broadcast_message(message);
-  free(message);
-}
+static void send_values_to_motor(float speed);
+static void blink_led_running(float speed);
+static void broadcast_all_values(void);
 
-// Broadcast only the current speed value - can be negative if going backward
-// {
-//   "current_speed": 12
-// }
-void broadcast_current_speed() {
-  char *message;
-  asprintf(&message, "{\"current_speed\":%f}", current_speed);
-  ESP_LOGI(TAG, "Send %s", message);
-  broadcast_message(message);
-  free(message);
-}
+static int get_speed_target(uint8_t forward_position, uint8_t backward_position);
+static float compute_next_speed(float current, float target, float delta);
 
-// Manage commands from web sockets
-// - Update max values
-// { "command": "update_max", "parameters": { "max_forward": double, "max_backward": double } }
-// - Read all values
-// { "command": "read" }
-// - Enable/Disable emergency stop
-// { "command": "emergency_stop", "parameters": { "is_enabled": bool } }
+// =======================
+// ==== WEBSOCKETS RX ====
+// =======================
+
 static void data_received(httpd_ws_frame_t* ws_pkt) {
   ESP_LOGI(TAG, "Received packet with message: %s", ws_pkt->payload);
 
   cJSON *root = cJSON_Parse((char*)ws_pkt->payload);
   char* command = cJSON_GetObjectItem(root, "command")->valuestring;
   ESP_LOGI(TAG, "Command: %s", command);
+
+  // Handle STA Wi-Fi credentials set from UI
+  if (strcmp("set_sta", command) == 0) {
+    cJSON* parameters = cJSON_GetObjectItem(root, "parameters");
+    if (parameters) {
+      cJSON* ssid = cJSON_GetObjectItem(parameters, "ssid");
+      cJSON* pass = cJSON_GetObjectItem(parameters, "password");
+      if (cJSON_IsString(ssid) && cJSON_IsString(pass)) {
+        wifi_set_sta_credentials(ssid->valuestring, pass->valuestring);
+        char *ack;
+        asprintf(&ack, "{\"ok\":true,\"type\":\"set_sta\",\"ssid\":\"%s\"}", ssid->valuestring);
+        broadcast_message(ack);
+        free(ack);
+      } else {
+        char *ack;
+        asprintf(&ack, "{\"ok\":false,\"type\":\"set_sta\",\"error\":\"invalid parameters\"}");
+        broadcast_message(ack);
+        free(ack);
+      }
+    }
+    goto end;
+  }
+
   if (strcmp("update_max", command) == 0) {
     cJSON* parameters = cJSON_GetObjectItem(root, "parameters");
     if (parameters == NULL) {
@@ -132,36 +138,40 @@ static void data_received(httpd_ws_frame_t* ws_pkt) {
     if (!cJSON_IsNumber(max_forward_node) || !cJSON_IsNumber(max_backward_node)) {
       goto end;
     }
-    // Set values in memory for immediate use
+
     max_forward = max_forward_node->valuedouble;
     max_backward = max_backward_node->valuedouble;
 
-    // Save values in storage to survive restarts
     writeFloat("max_forward", max_forward);
     writeFloat("max_backward", max_backward);
 
-    // Broadcast new values to all listeners
     broadcast_all_values();
-  } else if (strcmp("read", command) == 0) {
-    broadcast_all_values();
-  } else if (strcmp("emergency_stop", command) == 0) {
+    goto end;
+  }
+
+  if (strcmp("emergency_stop", command) == 0) {
     cJSON* parameters = cJSON_GetObjectItem(root, "parameters");
     if (parameters == NULL) {
       goto end;
     }
-    cJSON *is_enabled = cJSON_GetObjectItem(parameters, "is_enabled");
-    if (!cJSON_IsBool(is_enabled)) {
-      return;
-    }
-    // Set values in memory for immediate use, it doesn't survive restarts
-    emergency_stop = cJSON_IsTrue(is_enabled);
 
-    // Broadcast new values to all listeners
+    cJSON *active_node = cJSON_GetObjectItem(parameters, "active");
+    if (!cJSON_IsBool(active_node)) {
+      goto end;
+    }
+
+    emergency_stop = cJSON_IsTrue(active_node);
+    if (emergency_stop) {
+      current_speed = 0;
+      send_values_to_motor(current_speed);
+    }
+
     broadcast_all_values();
+    goto end;
+  }
 
 end:
-    cJSON_Delete(root);
-  }
+  cJSON_Delete(root);
 }
 
 // **********
@@ -171,21 +181,14 @@ end:
 #if WITH_ADC_THROTTLE
 static bool adc_calibration_init(void) {
   esp_err_t ret;
-  bool adc_calibration_enabled = false;
-
-  ret = esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_VREF);
-  if (ret == ESP_ERR_NOT_SUPPORTED) {
-    ESP_LOGW(TAG, "Calibration scheme not supported, skip software calibration");
-  } else if (ret == ESP_ERR_INVALID_VERSION) {
-    ESP_LOGW(TAG, "eFuse not burnt, skip software calibration");
-  } else if (ret == ESP_OK) {
-    adc_calibration_enabled = true;
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_DEFAULT, 0, &adc1_chars);
-  } else {
-    ESP_LOGE(TAG, "Invalid arg");
+  esp_adc_cal_characteristics_t adc_chars;
+  ret = esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_TP);
+  if (ret == ESP_ERR_NOT_SUPPORTED || ret == ESP_ERR_INVALID_VERSION) {
+    ESP_LOGW(TAG, "ADC calibration not supported, fallback to raw values");
+    return false;
   }
-
-  return adc_calibration_enabled;
+  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_DEFAULT, 1100, &adc_chars);
+  return true;
 }
 #endif
 
@@ -212,14 +215,13 @@ void setup_pin() {
   gpio_reset_pin(BACKWARD_PWM_PIN);
   gpio_set_direction(BACKWARD_PWM_PIN, GPIO_MODE_OUTPUT);
 
-  gpio_reset_pin(STATUS_LED_PIN);  
+  gpio_reset_pin(STATUS_LED_PIN);
   gpio_set_direction(STATUS_LED_PIN, GPIO_MODE_OUTPUT);
 }
 
-// Setup LED channel to be used to generate PWM
+// Setup PWM timer and channels
 void setup_pwm() {
-  ledc_channel_config_t ledc_channel_forward = {0}, ledc_channel_backward = {0};
-
+  ledc_channel_config_t ledc_channel_forward = {0};
   ledc_channel_forward.gpio_num = FORWARD_PWM_PIN;
   ledc_channel_forward.speed_mode = LEDC_HIGH_SPEED_MODE;
   ledc_channel_forward.channel = MOTOR_PWM_CHANNEL_FORWARD;
@@ -227,6 +229,7 @@ void setup_pwm() {
   ledc_channel_forward.timer_sel = MOTOR_PWM_TIMER;
   ledc_channel_forward.duty = 0;
 
+  ledc_channel_config_t ledc_channel_backward = {0};
   ledc_channel_backward.gpio_num = BACKWARD_PWM_PIN;
   ledc_channel_backward.speed_mode = LEDC_HIGH_SPEED_MODE;
   ledc_channel_backward.channel = MOTOR_PWM_CHANNEL_BACKWARD;
@@ -241,9 +244,13 @@ void setup_pwm() {
   ledc_timer.freq_hz = 25000;
 
   ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel_forward));
-	ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel_backward));
-	ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+  ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel_backward));
+  ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 }
+
+// *****************
+// **** DRIVING LOOP
+// *****************
 
 void setup_driving(void) {
   // Retrieve max values from storage
@@ -262,41 +269,11 @@ void setup_driving(void) {
   // Create a task with the higher priority for the driving task
   xTaskCreate(&drive_task, "drive_task", 2048, NULL, 20, NULL);
 
-  // Create a task with a lower priority to broadcast the current speed
-  xTaskCreate(&broadcast_speed_task, "broadcast_speed_task", 2048, NULL, 5, NULL);
+  // Create a task for broadcasting the values regularly to the UI
+  xTaskCreate(&broadcast_speed_task, "broadcast_speed_task", 2048, NULL, 10, NULL);
 
-  // Create a task for the led
-  xTaskCreate(&led_task, "led_task", 2048, NULL, 10, NULL);
-}
-
-// **********
-// **** LOGIC
-// **********
-
-// Speed is a percentage between -100 and 100 (backward and forward)
-void send_values_to_motor(int speed) {
-  float forward_duty_fraction = 0;
-  float backward_duty_fraction = 0;
-
-  if (speed > 100 || speed < -100) {
-    return;
-  }
-
-  if (speed > 0) {
-    forward_duty_fraction = speed / 100.0f;
-  } else if (speed < 0) {
-    backward_duty_fraction = speed / 100.0f;
-  }
-
-  uint32_t max_duty = (1 << MOTOR_PWM_DUTY_RESOLUTION) - 1;
-  uint32_t forward_duty = lroundf(forward_duty_fraction * (float)max_duty);
-  uint32_t backward_duty = -1 * lroundf(backward_duty_fraction * (float)max_duty);
-
-  ESP_ERROR_CHECK(ledc_set_duty(LEDC_HIGH_SPEED_MODE, MOTOR_PWM_CHANNEL_FORWARD, forward_duty));
-  ESP_ERROR_CHECK(ledc_update_duty(LEDC_HIGH_SPEED_MODE, MOTOR_PWM_CHANNEL_FORWARD));
-
-  ESP_ERROR_CHECK(ledc_set_duty(LEDC_HIGH_SPEED_MODE, MOTOR_PWM_CHANNEL_BACKWARD, backward_duty));
-  ESP_ERROR_CHECK(ledc_update_duty(LEDC_HIGH_SPEED_MODE, MOTOR_PWM_CHANNEL_BACKWARD));
+  // Create a task for the blinking LED
+  xTaskCreate(&led_task, "led_task", 2048, NULL, 5, NULL);
 }
 
 // Return the targeted speed based on the pedal status.
@@ -315,35 +292,6 @@ int get_speed_target(uint8_t forward_position, uint8_t backward_position) {
   return max(-max_backward, -max_backward * (backward_position / 100.0f));
 }
 
-uint8_t get_throttle_position(uint8_t gpio) {
-  #if WITH_ADC_THROTTLE
-  adc_average = 0;
-
-  for (int i = 0; i < 5; ++i) {
-    esp_adc_cal_get_voltage(gpio, &adc1_chars, &adc_voltage);
-    adc_average += adc_voltage;
-  }
-
-  adc_average = adc_average / 5;
-
-  // voltage is between 1000mv and 2600mv
-  // 16 = (2600 - 1000) / 100
-  return min(100, max(0, (int8_t)((adc_average - 1000) / 16.0f)));
-  #else
-  return !gpio_get_level(gpio) ? 100 : 0;
-  #endif
-}
-
-// Blink the led to indicate an emergency stop
-void blink_led_emergency_stop() {
-  led_sleep_delay = 200;
-}
-
-// Blink the led to indicate the car is running
-void blink_led_running(int speed) {
-  led_sleep_delay = speed == 0 ? 1000 : (1.0f - fabsf(speed / 100.0f)) * 160 + 20 /*ms mini*/;
-}
-
 // Calculate next step for a smooth transition from current speed to targeted speed
 float compute_next_speed(float current, float target, float delta) {    
   if (current < target) {
@@ -358,15 +306,10 @@ float compute_next_speed(float current, float target, float delta) {
     } else if (current < 0) {
       // Slow down more aggressively if the car is moving quicker than 50%
       float slowdown_rate = current > 50 ? 0.08 : 0.04;
-      // Safety! Slowing down backward, we must stop the car within a time frame
-      return current + delta * slowdown_rate;
+      return current + slowdown_rate * delta;
     } else {
-      // Else we update speed incrementaly
-      return current + SPEED_INCREMENT;
+      return current + SPEED_INCREMENT * delta;
     }
-
-    // Check if we went too far
-    if (current > target) return target;
   } else if (current > target) {
     // Slow down forward or speed up backward
 
@@ -379,67 +322,37 @@ float compute_next_speed(float current, float target, float delta) {
     } else if (current > 0) {
       // Slow down more aggressively if the car is moving quicker than 50%
       float slowdown_rate = current > 50 ? 0.08 : 0.04;
-      // Safety! Slowing down forward, we must stop the car within a time frame
-      return current - delta * slowdown_rate;
+      return current - slowdown_rate * delta;
     } else {
-      // Else we update speed incrementaly
-      return current - SPEED_INCREMENT;
+      return current - SPEED_INCREMENT * delta;
     }
-
-    // Check if we went too far
-    if (current < target) return target;
   }
 
-  return current;
+  return target;
 }
 
-// **********
-// **** TASKS
-// **********
-
-// Task to broadcast new speed value to websocket listeners
-static void broadcast_speed_task(void *pvParameter) {
-  float previous_speed_broacasted = -1.0f;
-
-  while (true) {
-    if (!emergency_stop && current_speed != previous_speed_broacasted) {
-      broadcast_current_speed();
-    }
-
-    previous_speed_broacasted = current_speed;
-
-    vTaskDelay(250 / portTICK_PERIOD_MS);
-  }
-}
-
-// Task that drives the car
 static void drive_task(void *pvParameter) {
   int64_t last_update = esp_timer_get_time();
-  float delta;
-
-  int forward_position = 0;
-  int backward_position = 0;
-
-  int target = 0;
+  float target = 0.0f;
+  float delta = 0.0f;
 
   while (true) {
-    // Manage emergency stop
     if (emergency_stop) {
       current_speed = 0;
-
       send_values_to_motor(current_speed);
-
-      last_update = esp_timer_get_time();
-
-      blink_led_emergency_stop();
-
-      vTaskDelay(50 / portTICK_PERIOD_MS);
+      blink_led_running(current_speed);
+      vTaskDelay(20 / portTICK_PERIOD_MS);
       continue;
     }
 
-    // Update pedal & direction status
-    forward_position = get_throttle_position(GAS_PEDAL_FORWARD_PIN);
-    backward_position = get_throttle_position(GAS_PEDAL_BACKWARD_PIN);
+    uint8_t forward_position = 0;
+    uint8_t backward_position = 0;
+
+    #if WITH_ADC_THROTTLE
+    adc_read_pedals(&forward_position, &backward_position);
+    #else
+    buttons_read_pedals(&forward_position, &backward_position);
+    #endif
 
     // Update targeted speed accordingly
     target = get_speed_target(forward_position, backward_position);
@@ -472,3 +385,90 @@ static void led_task(void *pvParameter) {
     vTaskDelay(led_sleep_delay / portTICK_PERIOD_MS);
   }
 }
+
+#if WITH_ADC_THROTTLE
+static void adc_read_pedals(uint8_t* forward_position, uint8_t* backward_position) {
+  int forward_value = 0;
+  int backward_value = 0;
+
+  for (int i=0; i<16; i++) {
+    forward_value += adc1_get_raw(GAS_PEDAL_FORWARD_PIN);
+    backward_value += adc1_get_raw(GAS_PEDAL_BACKWARD_PIN);
+  }
+  forward_value /= 16;
+  backward_value /= 16;
+
+  if (adc_calibration_enabled) {
+    // Add calibrated conversion if needed
+  }
+
+  *forward_position = (uint8_t)lroundf((forward_value / 4095.0f) * 100.0f);
+  *backward_position = (uint8_t)lroundf((backward_value / 4095.0f) * 100.0f);
+}
+#else
+static void buttons_read_pedals(uint8_t* forward_position, uint8_t* backward_position) {
+  // With pull-ups enabled, the button pressed pulls to GND (active low)
+  int forward_pressed = gpio_get_level(GAS_PEDAL_FORWARD_PIN) == 0;
+  int backward_pressed = gpio_get_level(GAS_PEDAL_BACKWARD_PIN) == 0;
+
+  *forward_position = forward_pressed ? 100 : 0;
+  *backward_position = backward_pressed ? 100 : 0;
+}
+#endif
+
+static void send_values_to_motor(float speed) {
+  float forward_duty_fraction = 0.0f;
+  float backward_duty_fraction = 0.0f;
+
+  if (speed > 0) {
+    forward_duty_fraction = speed / 100.0f;
+  } else if (speed < 0) {
+    backward_duty_fraction = speed / 100.0f;
+  }
+
+  uint32_t max_duty = (1 << MOTOR_PWM_DUTY_RESOLUTION) - 1;
+  uint32_t forward_duty = lroundf(forward_duty_fraction * (float)max_duty);
+  uint32_t backward_duty = -1 * lroundf(backward_duty_fraction * (float)max_duty);
+
+  ESP_ERROR_CHECK(ledc_set_duty(LEDC_HIGH_SPEED_MODE, MOTOR_PWM_CHANNEL_FORWARD, forward_duty));
+  ESP_ERROR_CHECK(ledc_update_duty(LEDC_HIGH_SPEED_MODE, MOTOR_PWM_CHANNEL_FORWARD));
+
+  ESP_ERROR_CHECK(ledc_set_duty(LEDC_HIGH_SPEED_MODE, MOTOR_PWM_CHANNEL_BACKWARD, backward_duty));
+  ESP_ERROR_CHECK(ledc_update_duty(LEDC_HIGH_SPEED_MODE, MOTOR_PWM_CHANNEL_BACKWARD));
+}
+
+static void blink_led_running(float speed) {
+  if (speed == 0) {
+    led_sleep_delay = 500;
+  } else {
+    float abs_speed = fabsf(speed);
+    if (abs_speed < 20) {
+      led_sleep_delay = 250;
+    } else if (abs_speed < 50) {
+      led_sleep_delay = 125;
+    } else {
+      led_sleep_delay = 60;
+    }
+  }
+}
+
+// ***************
+// **** WEBSOCKETS
+// ***************
+
+// Broadcast all values
+// {
+//   "current_speed": 12,
+//   "max_forward": 66,
+//   "max_backward": 50,
+//   "emergency_stop": false
+//}
+broadcast_all_values() {
+  char *message;
+  char *format = "{\"current_speed\":%f,\"max_forward\":%f,\"max_backward\":%f,\"emergency_stop\":%s}";
+  asprintf(&message, format, current_speed, max_forward, max_backward, emergency_stop ? "true" : "false");
+  ESP_LOGI(TAG, "Send %s", message);
+  broadcast_message(message);
+  free(message);
+}
+
