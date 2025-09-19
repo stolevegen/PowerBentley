@@ -22,7 +22,7 @@ static mqtt_config_t s_cfg;
 static void defaults(mqtt_config_t *c) {
   memset(c, 0, sizeof(*c));
   snprintf(c->uri, sizeof(c->uri), "mqtt://192.168.1.10:1883");
-  snprintf(c->base_topic, sizeof(c->base_topic), "powerjeep");
+  snprintf(c->base_topic, sizeof(c->base_topic), "powerbentley");
   // username/password empty by default
 }
 
@@ -66,7 +66,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
       ESP_LOGI(TAG, "MQTT connected");
       broadcast_status(true);
       // Example subscribe (optional):
-      // esp_mqtt_client_subscribe(s_client, "powerjeep/cmd/#", 0);
+      // esp_mqtt_client_subscribe(s_client, "powerbentley/cmd/#", 0);
       break;
     case MQTT_EVENT_DISCONNECTED:
       ESP_LOGW(TAG, "MQTT disconnected");
